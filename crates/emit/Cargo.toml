@@ -1,0 +1,13 @@
+[package]
+name = "felf-emit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+felf-core = { path = "../core" }
+anyhow.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+felf-core = { path = "../core" }

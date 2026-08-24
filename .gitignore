@@ -1,0 +1,41 @@
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+
+# Firmware corpus and extractions
+research/firmware
+research/firmware/
+research/extract/
+research/results/
+*.dmg
+*.sparsebundle/
+
+# VHS
+assets/*.ascii
+assets/*.webm
+assets/*.mp4
+assets/frames/
+vhs-*.gif
+*.tape.tmp
+
+# Generated reports and SBOMs
+*.cdx.json
+*.spdx.json
+report-*.html
+scan-*.html
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# macOS
+.DS_Store
+.AppleDouble
+Icon?
+
+# Editors
+.idea/
+*.swp
+*.swo

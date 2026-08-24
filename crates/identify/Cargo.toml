@@ -1,0 +1,13 @@
+[package]
+name = "felf-identify"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+felf-core = { path = "../core" }
+anyhow.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+felf-core = { path = "../core" }

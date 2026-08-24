@@ -1,0 +1,18 @@
+[package]
+name = "felf-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "felf"
+path = "src/main.rs"
+
+[dependencies]
+felf-core = { path = "../core" }
+felf-unpack = { path = "../unpack" }
+felf-identify = { path = "../identify" }
+felf-emit = { path = "../emit" }
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
