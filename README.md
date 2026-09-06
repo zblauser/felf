@@ -26,11 +26,30 @@ Real firmware, downloaded from vendor distribution servers. `syft` is the indust
 | TP-Link Archer C7 V5 | router | 2090 | **22** | 10 | 4 |
 | **D-Link DIR-655** | router | 815 | **19** | 9 | **0** |
 | D-Link DAP-1522 | access point | 763 | 4 | 2 | 1 |
-| Ubiquiti EdgeRouter X | router (Debian) | 21803 | 37 | 10 | **838** |
+| Ubiquiti EdgeRouter X | router (Debian) | 21803 | 271 | 258 | **838** |
 
 The DIR-655 is the obvious case: standard toolchain produces entirely empty document for a shipping consumer router.
 
-The EdgeRouter is the honest counter example. It carries a real Debian package database, existing tooling already works well there, and felf adds little. This is currently a tool for firmware **without** a usable package database; which is most current consumer and embedded devices.
+**Two of those numbers are not the same kind of number.** Six of these images carry no package database, so every component in those rows was identified from the bytes: 169 components, 98 versioned. The EdgeRouter is the exception — it ships a Debian `dpkg` database, felf reads it, and most of its 271 come from that file rather than from analysis. Counting a database is easy. Say which you did.
+
+The EdgeRouter remains the honest counter example. Existing tooling already works well there and syft still reports more than felf does. This is a tool for firmware **without** a usable package database — most current consumer and embedded devices — and where one exists felf reads it rather than pretending it does not.
+
+## Try it
+
+The comparison above uses vendor firmware you would have to source yourself. This one you can run in a minute:
+
+```
+curl -O https://downloads.openwrt.org/releases/24.10.0/targets/ath79/generic/openwrt-24.10.0-ath79-generic-tplink_archer-c7-v2-squashfs-sysupgrade.bin
+felf scan openwrt-24.10.0-ath79-generic-tplink_archer-c7-v2-squashfs-sysupgrade.bin
+```
+
+```
+no wrapper  1086 files (925 unique)  squashfs xz  1416 inodes declared
+...
+157 components, 152 versioned, 5 unversioned
+```
+
+0.7 seconds. OpenWrt ships an opkg database, so most of that is read rather than inferred — which is the point: felf uses the best evidence in the image and records which kind it was. Every claim in the SBOM says whether it came from a database, a version string, a build path or a SONAME.
 
 ## Findings
 
@@ -56,7 +75,9 @@ Graded against Alpine Linux packages. Package metadata stripped from test tree, 
 | **precision** | **100%** |
 | version recall | 42% |
 
-All version claims correct. 42% recall means most components are identified but not versioned. An unversioned component is reported as present with no version. `cargo test` fails the build if precision regresses.
+All version claims correct. 42% recall means most components are identified but not versioned. An unversioned component is reported as present with no version. The ratchet is a test: with the ground-truth corpus mounted, `cargo test --release -- --ignored` fails if any claim is wrong or recall drops below 40%. It is ignored by default because the corpus is too large to ship, and it fails rather than skips when asked for without one.
+
+Those 21 claims are graded against a synthetic Alpine tree. On real firmware the harder question is how much binary evidence recovers on its own, and `reconcile` measures it: of 140 packages an OpenWrt image declares, 4 match a project felf has a rule for — and it corroborated all 4 from the bytes. The limit is the size of the curated project table, not the technique. [docs/PROOF.md](docs/PROOF.md) carries the full split, including the part that is close to circular.
 
 ## Build
 
@@ -73,7 +94,13 @@ felf scan firmware.bin
 felf scan firmware.bin --unversioned
 felf scan firmware.bin --sbom out.cdx.json --report out.html --baseline 3
 felf unpack firmware.bin --out ./rootfs
+felf reconcile firmware.bin --manifest build.manifest
 ```
+
+`reconcile` compares a build manifest — Yocto, Buildroot, OpenWrt, dpkg — against what the image
+supports, and separates what the bytes corroborate from what only the image's own package
+database does. It reports entries it could not corroborate and components it could not match to
+a manifest entry; it does not claim either is missing.
 
 Takes zip, tar, gzip, Netgear CHK, Broadcom TRX, u-boot uImage, or a raw image. You should not have to unwrap anything first.
 
@@ -88,11 +115,21 @@ present at which versions. It does not claim any of them to be exploitable in yo
 that could not be parsed are stated explicitly in both the SBOM and the report. An image
 that cannot be opened still produces a document saying so.
 
-**Precision only measured on 21 assorted firmware currently.**
+**Precision is measured on 21 version claims**, graded against Alpine ground truth containing 50 components. Twenty-one correct out of twenty-one is a real number, not a large one. The corpus in the table above is 7 vendor images out of 11 attempted.
+
+## Detail
+
+| | |
+|---|---|
+| [docs/PROOF.md](docs/PROOF.md) | every number on this page, and how it was measured |
+| [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) | what it does to a file, and why each rule exists |
+| [docs/FOR-MANUFACTURERS.md](docs/FOR-MANUFACTURERS.md) | the same thing without the jargon |
+| [research/FINDINGS.md](research/FINDINGS.md) | the full evidence trail, including what was tried and retracted |
+| [CHANGELOG.md](CHANGELOG.md) | what changed and why |
 
 ## Status
 
-v0.0.1. Working, tested, and not yet used by anyone but its author.
+v0.0.2. Working, tested, and not yet used by anyone but its author.
 
 ## Licence
 
