@@ -3,10 +3,13 @@ resolver = "2"
 members = ["crates/core", "crates/unpack", "crates/identify", "crates/emit", "crates/cli"]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 rust-version = "1.91"
 license = "AGPL-3.0-or-later"
+description = "Firmware component inventory. Reads what the vendor actually shipped, and claims only what it can prove."
+repository = "https://github.com/zblauser/felf"
+readme = "README.md"
 
 [workspace.dependencies]
 anyhow = "1"

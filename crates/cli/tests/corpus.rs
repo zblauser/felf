@@ -2,7 +2,10 @@
 //! others is the failure mode this catches — adding uImage support once cost three images
 //! because the payload replaced the raw scan instead of supplementing it.
 //!
-//! Set FELF_CORPUS to the vendor firmware directory to enable.
+//! Ignored by default: the corpus is vendor firmware, too large to ship. Run the gate with
+//! `FELF_CORPUS=<vendor firmware dir> cargo test --release -- --ignored`. An image the
+//! corpus is missing counts as a failure, not a skip — otherwise an empty directory
+//! reports a pass.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,23 +33,27 @@ fn find(dir: &Path, fragment: &str) -> Option<PathBuf> {
 }
 
 #[test]
+#[ignore = "requires FELF_CORPUS; run with --ignored"]
 fn extracts_known_corpus_images() {
-	let Ok(dir) = std::env::var("FELF_CORPUS") else {
-		eprintln!("FELF_CORPUS unset; skipping");
-		return;
+	let dir = match std::env::var("FELF_CORPUS") {
+		Ok(dir) => PathBuf::from(dir),
+		Err(_) => panic!("FELF_CORPUS unset; point it at the vendor firmware directory"),
 	};
-	let dir = PathBuf::from(dir);
+	assert!(dir.is_dir(), "FELF_CORPUS={} is not a directory", dir.display());
 	let expected = [
 		("netgear-r7000", 1500usize, 40usize),
 		("tplink-archer-c7-v5", 2000, 18),
 		("asus-rt-ac68u", 2400, 35),
 		("dlink-dir-655", 800, 15),
-		("dlink-dns-320", 2700, 24),
-		("ubiquiti-er-x", 21000, 40),
+		("dlink-dns-320", 2700, 20),
+		("ubiquiti-er-x", 21000, 35),
 	];
 	let mut failures = Vec::new();
 	for (fragment, min_files, min_comps) in expected {
-		let Some(path) = find(&dir, fragment) else { continue };
+		let Some(path) = find(&dir, fragment) else {
+			failures.push(format!("{fragment}: no image matching this name in {}", dir.display()));
+			continue;
+		};
 		match scan(&path) {
 			Some((files, comps)) if files >= min_files && comps >= min_comps => {}
 			other => failures

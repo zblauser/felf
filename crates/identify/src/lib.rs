@@ -6,6 +6,7 @@ use felf_core::{store::Store, Component, Confidence, Evidence, EvidenceKind};
 use regex::bytes::Regex as ByteRegex;
 use regex::Regex;
 
+pub mod manifest;
 pub mod rules;
 
 pub struct Analyzer {
@@ -126,6 +127,16 @@ impl Analyzer {
 				None => continue,
 			};
 
+			if is_package_database(path) {
+				for (pkg, version) in package_database(data) {
+					let entry = found.entry(normalize_pkg(&pkg)).or_default();
+					let value = format!("{pkg} {version}");
+					entry.evidence.push(ev(EvidenceKind::PackageDatabase, path, &value, Confidence::Confirmed));
+					entry.record(version, path);
+				}
+				continue;
+			}
+
 			if let Some(caps) = self.package_file.captures(name) {
 				let entry = found.entry(normalize_pkg(&caps[1])).or_default();
 				entry.record(caps[2].to_string(), path);
@@ -226,7 +237,7 @@ fn is_text(data: &[u8]) -> bool {
 }
 
 /// One version refines the other when it is the same release expressed more precisely.
-fn refines(a: &str, b: &str) -> bool {
+pub(crate) fn refines(a: &str, b: &str) -> bool {
 	a == b || a.starts_with(b) || b.starts_with(a)
 }
 
@@ -260,7 +271,12 @@ fn build_components(found: BTreeMap<String, Found>) -> Vec<Component> {
 		// One entry per version: devices ship duplicate components at different versions
 		// (R7000 carries openssl 1.0.2h and 1.0.2r), and patching one leaves the other.
 		let multi = f.versions.len() > 1;
-		for v in f.versions.keys() {
+		// A path that yielded no surviving version — a bare SONAME, or one whose version
+		// was collapsed into a refinement — is a fact about the project rather than about
+		// either copy, so it stays on both. Anything else belongs only to the version its
+		// own file produced; without this the 1.0.2r entry cites 1.0.2h's bytes.
+		let attributed: BTreeSet<&PathBuf> = f.versions.values().flatten().collect();
+		for (v, paths) in &f.versions {
 			out.push(Component {
 				project: project.clone(),
 				version: Some(v.clone()),
@@ -270,7 +286,12 @@ fn build_components(found: BTreeMap<String, Found>) -> Vec<Component> {
 					None => format!("pkg:generic/{project}@{v}"),
 				}),
 				confidence: if multi { Confidence::Likely } else { Confidence::Confirmed },
-				evidence: f.evidence.clone(),
+				evidence: f
+					.evidence
+					.iter()
+					.filter(|e| paths.contains(&e.path) || !attributed.contains(&e.path))
+					.cloned()
+					.collect(),
 			});
 		}
 	}
@@ -290,7 +311,94 @@ fn known_project(name: &str) -> Option<&'static str> {
 	rules::CPE.iter().find(|(p, _)| *p == name).map(|(p, _)| *p)
 }
 
-fn normalize_pkg(raw: &str) -> String {
+/// opkg and dpkg keep the device's own record of what was installed. Where it exists it is
+/// better evidence than anything inferred from bytes — and most firmware has none, which is
+/// the reason the rest of this file exists.
+fn is_package_database(path: &Path) -> bool {
+	path.ends_with("usr/lib/opkg/status") || path.ends_with("var/lib/dpkg/status")
+}
+
+/// Both write Debian control stanzas. Continuation lines can contain colons, so only the
+/// three fields that matter are matched and everything else is ignored.
+pub(crate) fn package_database(data: &[u8]) -> Vec<(String, String)> {
+	let text = String::from_utf8_lossy(data);
+	let mut out = Vec::new();
+	for stanza in text.split("\n\n") {
+		let (mut pkg, mut source, mut version, mut installed) = (None, None, None, true);
+		for line in stanza.lines() {
+			let Some((key, value)) = line.split_once(':') else { continue };
+			match key.trim() {
+				"Package" => pkg = Some(value.trim().to_lowercase()),
+				// Debian binary packages name their upstream project here when the two
+				// differ: zlib1g declares Source: zlib. Taking the database's own word
+				// beats a curated alias table, which is where invented versions come from.
+				"Source" => {
+					let raw = value.split('(').next().unwrap_or_default();
+					source = Some(raw.trim().to_lowercase());
+				}
+				"Version" => version = Some(value.trim()),
+				// dpkg keeps entries for packages that were removed but left config behind.
+				"Status" => installed = value.contains("installed"),
+				_ => {}
+			}
+		}
+		let name = source.filter(|s| !s.is_empty()).or(pkg);
+		if let (Some(name), Some(version), true) = (name, version, installed) {
+			if !name.is_empty() {
+				out.push((name, upstream_version(version, VersionStyle::Control)));
+			}
+		}
+	}
+	out
+}
+
+/// A Debian version is `[epoch:]upstream[-revision]`, and opkg follows the same shape with
+/// an `-rN` revision. Only the upstream part is a claim about the upstream project: leaving
+/// `1.2.8.dfsg-5` on zlib both overstates what is known and stops the database version
+/// matching the `1.2.8` read out of the binary, which would report one library twice.
+/// How much of a version string is packaging rather than upstream release. Control files
+/// follow Debian's `[epoch:]upstream[-revision]` and the whole trailing field is packaging.
+/// A build manifest of unknown provenance does not, and stripping there would turn
+/// `1.0.2-beta1` into a claim about `1.0.2`, which shipped different code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VersionStyle {
+	Control,
+	/// Strip only an explicit `-rN` package revision.
+	Revision,
+	Verbatim,
+}
+
+pub(crate) fn upstream_version(raw: &str, style: VersionStyle) -> String {
+	if style == VersionStyle::Verbatim {
+		return raw.to_string();
+	}
+	let v = match raw.split_once(':') {
+		Some((epoch, rest)) if !epoch.is_empty() && epoch.chars().all(|c| c.is_ascii_digit()) => rest,
+		_ => raw,
+	};
+	let v = match (style, v.rsplit_once('-')) {
+		(VersionStyle::Control, Some((base, rev))) if !base.is_empty() && !rev.is_empty() => base,
+		(VersionStyle::Revision, Some((base, rev)))
+			if !base.is_empty()
+				&& rev.starts_with('r')
+				&& rev.len() > 1
+				&& rev[1..].chars().all(|c| c.is_ascii_digit()) =>
+		{
+			base
+		}
+		_ => v,
+	};
+	// `.dfsg` and `+dfsg` mark a tarball Debian repacked to drop non-free files. The code
+	// is the upstream release; the suffix describes the packaging.
+	for marker in [".dfsg", "+dfsg", "~dfsg", ".orig"] {
+		if let Some((base, _)) = v.split_once(marker) {
+			return base.to_string();
+		}
+	}
+	v.to_string()
+}
+
+pub(crate) fn normalize_pkg(raw: &str) -> String {
 	let lower = raw.to_lowercase();
 	match lower.as_str() {
 		"asuslibcurl" | "libcurl" => "curl".into(),

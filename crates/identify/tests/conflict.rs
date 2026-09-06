@@ -1,6 +1,6 @@
 //! Two versions for one project mean different things depending on where they came from.
 
-use felf_core::store::Store;
+use felf_core::{store::Store, Component};
 use felf_identify::Analyzer;
 
 fn as_binary(blob: &[u8]) -> Vec<u8> {
@@ -11,16 +11,16 @@ fn as_binary(blob: &[u8]) -> Vec<u8> {
 	out
 }
 
-fn analyze(files: &[(&str, &[u8])]) -> Vec<(String, Option<String>)> {
+fn components(files: &[(&str, &[u8])]) -> Vec<Component> {
 	let mut store = Store::new();
 	for (path, blob) in files {
 		store.insert(*path, as_binary(blob));
 	}
-	Analyzer::new()
-		.analyze(&store)
-		.into_iter()
-		.map(|c| (c.project, c.version))
-		.collect()
+	Analyzer::new().analyze(&store)
+}
+
+fn analyze(files: &[(&str, &[u8])]) -> Vec<(String, Option<String>)> {
+	components(files).into_iter().map(|c| (c.project, c.version)).collect()
 }
 
 #[test]
@@ -67,4 +67,31 @@ fn a_refinement_is_not_a_contradiction() {
 		.filter_map(|(_, v)| v.clone())
 		.collect();
 	assert_eq!(versions, vec!["1.0.2u".to_string()], "{found:?}");
+}
+
+#[test]
+fn each_version_carries_only_its_own_evidence() {
+	// The SBOM's whole promise is that a reader can check a claim. Cloning the project's
+	// full evidence onto every version made the 1.0.2r entry cite 1.0.2h's bytes.
+	let found = components(&[
+		("lib/libcrypto.so.1.0.0", b"OpenSSL 1.0.2h  3 May 2016"),
+		("opt/vendor/libcrypto.so.1.0.0", b"OpenSSL 1.0.2r  26 Feb 2019"),
+	]);
+	let openssl: Vec<&Component> = found.iter().filter(|c| c.project == "openssl").collect();
+	assert_eq!(openssl.len(), 2, "{found:?}");
+
+	for c in openssl {
+		let version = c.version.clone().unwrap_or_default();
+		let cited: Vec<&str> = c
+			.evidence
+			.iter()
+			.filter(|e| e.value.chars().next().is_some_and(|ch| ch.is_ascii_digit()))
+			.map(|e| e.value.as_str())
+			.collect();
+		assert!(!cited.is_empty(), "no version evidence for {version}: {c:?}");
+		assert!(
+			cited.iter().all(|v| *v == version),
+			"{version} cites evidence for another version: {cited:?}"
+		);
+	}
 }

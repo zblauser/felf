@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "felf-cli"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -214,7 +214,7 @@ dependencies = [
 
 [[package]]
 name = "felf-core"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "blake3",
@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "felf-emit"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "felf-core",
@@ -232,7 +232,7 @@ dependencies = [
 
 [[package]]
 name = "felf-identify"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "felf-core",
@@ -241,7 +241,7 @@ dependencies = [
 
 [[package]]
 name = "felf-unpack"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "felf-core",

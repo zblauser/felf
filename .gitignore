@@ -4,14 +4,18 @@ target/
 *.pdb
 
 # Firmware corpus and extractions
-research/firmware
-research/firmware/
-research/extract/
-research/results/
 *.dmg
 *.sparsebundle/
 
-# VHS
+# research/ is local validation tooling: the scripts are hardcoded to this machine's
+# corpus paths and are no use to a stranger. Only the evidence trail ships.
+research/*
+!research/FINDINGS.md
+
+# VHS. The .tape recording scripts and their notes are local tooling, not part of
+# the repo: the GIFs they produce are what the README needs. Tapes live in the
+# staging dir alongside the corpus they depend on.
+assets/tapes/
 assets/*.ascii
 assets/*.webm
 assets/*.mp4
@@ -30,12 +34,23 @@ __pycache__/
 *.pyc
 .venv/
 
-# macOS
+# macOS / iCloud
 .DS_Store
 .AppleDouble
+._*
+*.icloud
 Icon?
 
 # Editors
 .idea/
+.vscode/
 *.swp
 *.swo
+
+# Unpublished material. MARKET.md rule 5: nothing leaves drafts without the user
+# reading it first. Delete this line deliberately when a draft is ready to ship.
+docs/drafts/
+
+# Agent org. Lives in the staging dir only and is not copied to the public repo;
+# this is belt-and-braces in case a wholesale copy ever happens.
+.claude/
