@@ -2,7 +2,10 @@
 //! versions. Ground truth is project -> SET of versions: a tree can legitimately contain
 //! two generations of one library, and collapsing them scores a correct answer as wrong.
 //!
-//! Set FELF_GROUNDTRUTH to the extracted corpus root (see research/build_groundtruth.py).
+//! Ignored by default: the corpus is too large to ship. Run the gate with
+//! `FELF_GROUNDTRUTH=<corpus root> cargo test --release -- --ignored`
+//! (see research/build_groundtruth.py). Asked for explicitly, a missing corpus is a
+//! failure — a gate that reports a pass without running is worse than no gate.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -45,16 +48,13 @@ fn load(root: &Path, store: &mut Store) {
 }
 
 #[test]
+#[ignore = "requires FELF_GROUNDTRUTH; run with --ignored"]
 fn precision_against_alpine_ground_truth() {
-	let Ok(root) = std::env::var("FELF_GROUNDTRUTH") else {
-		eprintln!("FELF_GROUNDTRUTH unset; skipping");
-		return;
+	let root = match std::env::var("FELF_GROUNDTRUTH") {
+		Ok(root) => PathBuf::from(root),
+		Err(_) => panic!("FELF_GROUNDTRUTH unset; see research/build_groundtruth.py"),
 	};
-	let root = PathBuf::from(root);
-	if !root.is_dir() {
-		eprintln!("{} missing; skipping", root.display());
-		return;
-	}
+	assert!(root.is_dir(), "FELF_GROUNDTRUTH={} is not a directory", root.display());
 
 	let mut truth: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
 	for line in TRUTH.lines() {
@@ -100,10 +100,7 @@ fn precision_against_alpine_ground_truth() {
 		}
 	}
 
-	if claims == 0 {
-		eprintln!("no ground-truth trees found under {}; skipping", root.display());
-		return;
-	}
+	assert!(claims > 0, "no ground-truth trees found under {}", root.display());
 	let precision = 100.0 * correct as f64 / claims as f64;
 	let recall = 100.0 * claims as f64 / ground as f64;
 	println!("ground truth {ground}  claims {claims}  correct {correct}");

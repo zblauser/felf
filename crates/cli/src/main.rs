@@ -22,6 +22,19 @@ enum Cmd {
 		#[arg(short, long)]
 		out: Option<PathBuf>,
 	},
+	/// Compare a build manifest against what the image actually supports
+	Reconcile {
+		image: PathBuf,
+		/// Manifest the build system produced: opkg/dpkg control, OpenWrt, or two columns
+		#[arg(long, value_name = "FILE")]
+		manifest: PathBuf,
+		/// List components found in the image that matched no manifest entry by name
+		#[arg(long)]
+		unmatched: bool,
+		/// List manifest entries with nothing in the image supporting them
+		#[arg(long)]
+		uncorroborated: bool,
+	},
 	/// Extract and inventory components
 	Scan {
 		image: PathBuf,
@@ -43,6 +56,9 @@ enum Cmd {
 fn main() -> Result<()> {
 	match Cli::parse().cmd {
 		Cmd::Unpack { image, out } => unpack(image, out),
+		Cmd::Reconcile { image, manifest, unmatched, uncorroborated } => {
+			reconcile(image, manifest, unmatched, uncorroborated)
+		}
 		Cmd::Scan { image, unversioned, sbom, report, baseline } => {
 			scan(image, unversioned, sbom, report, baseline)
 		}
@@ -271,6 +287,93 @@ fn scan(
 		let html = felf_emit::report::build(&e.inventory, &subject, &stamp, baseline);
 		fs::write(&path, html)?;
 		println!("wrote {}", path.display());
+	}
+	Ok(())
+}
+
+/// Corroboration, not discrepancy: a manifest entry with no support is reported as
+/// unsupported, never as absent, and a component that matched no entry is reported as a
+/// name that did not match. Deciding either way needs a package-name to upstream-project
+/// mapping that only Debian's `Source:` field supplies.
+fn reconcile(
+	image: PathBuf,
+	manifest: PathBuf,
+	show_unmatched: bool,
+	show_uncorroborated: bool,
+) -> Result<()> {
+	let declared_bytes = fs::read(&manifest)?;
+	let (format, declared) = felf_identify::manifest::parse(&declared_bytes);
+	if declared.is_empty() {
+		bail!("no entries parsed from {} as {}", manifest.display(), format.name());
+	}
+
+	let mut e = extract(&image)?;
+	if e.store.is_empty() {
+		println!("{}  no filesystem extracted", e.note);
+		for gap in &e.inventory.gaps {
+			println!("gap: {}", gap.reason);
+		}
+		bail!("nothing to compare against");
+	}
+	report_extraction(&e);
+	expand_nested(&mut e.store);
+	let observed = Analyzer::new().analyze(&e.store);
+	let r = felf_identify::manifest::reconcile(&declared, &observed);
+
+	let from_bytes = r.corroborated.iter().filter(|c| c.from_bytes()).count();
+	println!(
+		"manifest {}  {} declared ({})",
+		manifest.file_name().unwrap_or(manifest.as_os_str()).to_string_lossy(),
+		declared.len(),
+		format.name()
+	);
+	println!("image    {} components\n", observed.len());
+	let db_only = r.corroborated.len() - from_bytes;
+	println!("  corroborated    {:4}  of {} declared", r.corroborated.len(), declared.len());
+	println!("     from the bytes             {from_bytes:4}");
+	println!("     from the image's own package database only  {db_only:4}");
+	if db_only > 0 {
+		println!(
+			"       that database and the manifest are both products of the same build,\n\
+			 \x20      so agreement between them corroborates very little"
+		);
+	}
+	println!("  uncorroborated  {:4}  nothing in the image supports these", r.uncorroborated.len());
+	println!("  unmatched       {:4}  found in the image, no manifest entry of that name", r.unmatched.len());
+
+	if from_bytes > 0 {
+		println!("\ncorroborated from the bytes");
+		for c in r.corroborated.iter().filter(|c| c.from_bytes()) {
+			let kinds: Vec<&str> = c.evidence.iter().copied().collect();
+			println!(
+				"  {:24}  manifest {:16}  image {:16}  {}",
+				c.project,
+				c.declared.as_deref().unwrap_or("-"),
+				if c.observed.is_empty() { "-".into() } else { c.observed.join(", ") },
+				kinds.join(", ")
+			);
+		}
+	}
+
+	let disagreements: Vec<_> = r.disagreements().collect();
+	if !disagreements.is_empty() {
+		println!("\nversion disagreements");
+		for c in disagreements {
+			println!("  {:24}  manifest {:20}  image {}", c.project, c.declared.as_deref().unwrap_or("-"), c.observed.join(", "));
+		}
+	}
+
+	if show_uncorroborated && !r.uncorroborated.is_empty() {
+		println!("\nuncorroborated — declared, not supported by anything in the image");
+		for d in &r.uncorroborated {
+			println!("  {:32}  {}", d.raw, d.version.as_deref().unwrap_or("-"));
+		}
+	}
+	if show_unmatched && !r.unmatched.is_empty() {
+		println!("\nunmatched — found in the image, no manifest entry of that name");
+		for name in &r.unmatched {
+			println!("  {name}");
+		}
 	}
 	Ok(())
 }
